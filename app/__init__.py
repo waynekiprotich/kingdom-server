@@ -17,6 +17,7 @@ from app.config import get_config
 from app.errors import register_error_handlers
 from app.extensions import cors, db, jwt, migrate
 from app.jwt_callbacks import register_jwt_callbacks
+from app.performance import register_performance
 from app.security import register_security_headers
 
 # Import for the side effect of registering every table on Base.metadata.
@@ -45,6 +46,7 @@ def create_app(config_name: str | None = None) -> Flask:
         app.wsgi_app = ProxyFix(app.wsgi_app, x_for=hops, x_proto=hops, x_host=hops)
 
     register_security_headers(app)
+    register_performance(app)
 
     db.init_app(app)
     migrate.init_app(app, db, directory=str(MIGRATIONS_DIR))
@@ -53,6 +55,12 @@ def create_app(config_name: str | None = None) -> Flask:
         app,
         resources={r"/api/*": {"origins": app.config["CORS_ORIGINS"]}},
         supports_credentials=False,
+        # Catalog reads are deliberately "simple" requests and are never
+        # preflighted (see `services/api.js`). What remains — an admin's
+        # Authorization header, a checkout's JSON body — cannot avoid a
+        # preflight, so let the browser remember the answer instead of
+        # spending a round trip on it before every single request.
+        max_age=86400,
     )
 
     register_error_handlers(app)

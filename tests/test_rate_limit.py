@@ -141,7 +141,10 @@ def test_personal_data_is_never_cached(client, auth_headers):
 def test_the_public_catalog_stays_cacheable(client):
     """no-store on the busiest, least sensitive endpoint would be a
     performance cost with nothing bought for it."""
-    assert "Cache-Control" not in client.get("/api/products").headers
+    cache_control = client.get("/api/products").headers["Cache-Control"]
+
+    assert "no-store" not in cache_control
+    assert "public" in cache_control
 
 
 def test_hsts_is_only_promised_in_production(client):
