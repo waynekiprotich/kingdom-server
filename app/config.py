@@ -90,7 +90,14 @@ class BaseConfig:
     RATE_LIMITS = {
         "login": (10, 900),  # 10 attempts per 15 min, on top of account lockout
         "refresh": (60, 900),
-        "orders": (12, 600),  # a real person does not place 12 orders in 10 min
+        # Orders are counted per address, and in Kenya an address is not a
+        # person: Safaricom and the other carriers put large numbers of mobile
+        # customers behind one public IP (CGNAT), so everyone shopping over
+        # mobile data from one carrier gateway shares this allowance. Sized
+        # for that, not for one shopper — the limit still stops a script
+        # hammering checkout, but a busy evening will not start turning real
+        # customers away. Lower it only with the shared-IP case in mind.
+        "orders": (40, 600),
         "upload-signature": (60, 3600),
     }
 

@@ -13,11 +13,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from sqlalchemy.exc import IntegrityError
 from werkzeug.exceptions import HTTPException
 
 from app.extensions import db
+from app.request_id import current as current_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -105,8 +106,13 @@ _HTTP_CODES = {
 }
 
 
-def _envelope(code: str, message: str, status: int):
-    return jsonify({"success": False, "error": {"code": code, "message": message}}), status
+def _envelope(code: str, message: str, status: int, *, reference: str | None = None):
+    error: dict[str, Any] = {"code": code, "message": message}
+    if reference:
+        # An extra field, never a replacement: clients still branch on `code`
+        # (§14). This is only so a customer can quote something findable.
+        error["reference"] = reference
+    return jsonify({"success": False, "error": error}), status
 
 
 def register_error_handlers(app: Flask) -> None:
@@ -140,10 +146,20 @@ def register_error_handlers(app: Flask) -> None:
 
     @app.errorhandler(Exception)
     def handle_unexpected(error: Exception):
-        # Log the detail, return none of it — internals never reach a client (§16).
-        logger.exception("Unhandled exception: %s", error)
+        # Log the detail, return none of it — internals never reach a client
+        # (§16). What does go back is the request id, which is not internal
+        # detail: it identifies the failure without describing it, and turns
+        # "it broke earlier" into a single log search.
+        #
+        # A failed request may have left the session unusable; roll it back so
+        # the next request on this connection is not poisoned by it.
+        db.session.rollback()
+        logger.exception(
+            "Unhandled exception on %s %s: %s", request.method, request.path, error
+        )
         return _envelope(
             "INTERNAL_ERROR",
             "Something went wrong on our side. Please try again.",
             500,
+            reference=current_request_id(),
         )

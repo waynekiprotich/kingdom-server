@@ -18,6 +18,7 @@ from app.errors import register_error_handlers
 from app.extensions import cors, db, jwt, migrate
 from app.jwt_callbacks import register_jwt_callbacks
 from app.performance import register_performance
+from app.request_id import RequestIdFilter, register_request_id
 from app.security import register_security_headers
 
 # Import for the side effect of registering every table on Base.metadata.
@@ -32,10 +33,15 @@ def create_app(config_name: str | None = None) -> Flask:
     app = Flask(__name__)
     app.config.from_object(get_config(config_name))
 
+    # `request_id` comes from RequestIdFilter below. Having it in the format
+    # is the whole point: a traceback that cannot be tied to the request that
+    # caused it is a traceback nobody can act on.
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        format="%(asctime)s %(levelname)s %(name)s [%(request_id)s]: %(message)s",
     )
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(RequestIdFilter())
 
     # Behind a proxy, remote_addr is the proxy. Rate limiting and audit logs
     # both key off the caller's address, so it has to be the real one — and
@@ -45,6 +51,8 @@ def create_app(config_name: str | None = None) -> Flask:
     if hops:
         app.wsgi_app = ProxyFix(app.wsgi_app, x_for=hops, x_proto=hops, x_host=hops)
 
+    # First, so everything registered after it can log against an id.
+    register_request_id(app)
     register_security_headers(app)
     register_performance(app)
 
