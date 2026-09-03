@@ -52,6 +52,7 @@ def create_app(config_name: str | None = None) -> Flask:
         admin_media,
         admin_orders,
         catalog,
+        checkout,
         health,
     )
 
@@ -61,6 +62,7 @@ def create_app(config_name: str | None = None) -> Flask:
     app.register_blueprint(admin_catalog.bp)
     app.register_blueprint(admin_orders.bp)
     app.register_blueprint(catalog.bp)
+    app.register_blueprint(checkout.bp)
 
     from app.cli import register_cli
 

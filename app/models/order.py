@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
@@ -62,6 +63,18 @@ class Order(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     order_number: Mapped[str] = mapped_column(
         String(32), nullable=False, unique=True, index=True
+    )
+    #: A random, unguessable identifier for the guest confirmation page —
+    #: deliberately not ``order_number``, which is sequential and would let
+    #: anyone enumerate other customers' orders by walking KC-100001,
+    #: KC-100002, ... A guest has no account, so this token is the only thing
+    #: that stands between "the person who just checked out" and "anyone."
+    confirmation_token: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        unique=True,
+        index=True,
+        default=lambda: secrets.token_urlsafe(24),
     )
     status: Mapped[OrderStatus] = mapped_column(
         status_enum(OrderStatus, "order_status"),

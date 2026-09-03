@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 from datetime import timedelta
+from decimal import Decimal
 
 
 class ConfigError(RuntimeError):
@@ -89,6 +90,12 @@ class BaseConfig:
 
     #: Widths generated for responsive product imagery (spec §17, §22).
     IMAGE_WIDTHS = (400, 800, 1200)
+
+    #: Flat delivery fee charged on every order (spec §7). Not a secret and
+    #: not per-environment, so it is a plain constant rather than something
+    #: read from the environment — change it here when a real logistics
+    #: partner and rate are settled.
+    DELIVERY_FEE = Decimal("300.00")
 
     def __init__(self) -> None:
         for name in (

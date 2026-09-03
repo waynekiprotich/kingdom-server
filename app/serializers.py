@@ -284,6 +284,49 @@ def serialize_admin_order(order) -> dict:
     }
 
 
+def serialize_order_item(item) -> dict:
+    """Public shape of a line item — same fields as the admin one.
+
+    A separate function anyway: the admin and guest shapes happen to match
+    today, but they answer different questions (an admin auditing a sale vs. a
+    guest reading their own receipt) and are free to diverge without either
+    one silently changing the other.
+    """
+    return {
+        "product_name": item.product_name,
+        "variant_sku": item.variant_sku,
+        "size": item.size,
+        "color": item.color,
+        "unit_price": money(item.unit_price),
+        "quantity": item.quantity,
+        "line_total": money(item.line_total),
+    }
+
+
+def serialize_order_confirmation(order) -> dict:
+    """What a guest sees on their own order confirmation page.
+
+    Reachable only by ``confirmation_token`` (a guest has no account and no
+    other credential), so this can safely include the customer's own contact
+    and delivery details — just not anything about payment credentials or
+    internal identifiers.
+    """
+    return {
+        "order_number": order.order_number,
+        "status": order.status.value,
+        "customer_name": order.customer_name,
+        "customer_phone": order.customer_phone,
+        "delivery_location": order.delivery_location,
+        "delivery_notes": order.delivery_notes,
+        "subtotal": money(order.subtotal),
+        "delivery_fee": money(order.delivery_fee),
+        "total": money(order.total),
+        "items": [serialize_order_item(item) for item in order.items],
+        "created_at": order.created_at.isoformat() if order.created_at else None,
+        "paid_at": order.paid_at.isoformat() if order.paid_at else None,
+    }
+
+
 def serialize_product_detail(product: Product) -> dict:
     variants = [
         variant
