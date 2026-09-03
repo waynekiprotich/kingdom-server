@@ -44,7 +44,7 @@ def _cloud_name() -> str:
         raise CloudinaryNotConfigured(
             "CLOUDINARY_CLOUD_NAME is not set. Add it to server/.env."
         )
-    return name
+    return name.strip()
 
 
 def build_url(
