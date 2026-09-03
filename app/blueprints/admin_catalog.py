@@ -12,6 +12,7 @@ whole module:
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Any
 
 from flask import Blueprint, g, jsonify
 from sqlalchemy import func, or_, select
@@ -634,6 +635,18 @@ def delete_variant(variant_id: int):
 IMAGE_FIELDS = ("public_id", "url", "alt_text", "position", "is_primary")
 
 
+def _blank_to_none(value: Any) -> Any:
+    """Fold a whitespace-only field to None, leaving MISSING untouched.
+
+    ``body_str`` strips, so "   " arrives as "". Stored as-is that satisfies
+    the ``public_id IS NOT NULL OR url IS NOT NULL`` constraint but serialises
+    back as ``url: null`` — a row that claims to be a photograph and renders as
+    an empty box. MISSING has to survive, because ``apply_changes`` relies on
+    it to tell an absent field from one explicitly set to null.
+    """
+    return None if value == "" else value
+
+
 def _clear_other_primaries(product_id: int, keep_id: int) -> None:
     """Exactly one image per product is the primary one."""
     for other in db.session.scalars(
@@ -649,24 +662,28 @@ def _clear_other_primaries(product_id: int, keep_id: int) -> None:
 @bp.post("/products/<int:product_id>/images")
 @admin_required()
 def add_image(product_id: int):
-    """Attach an already-uploaded image.
+    """Attach an image that already exists in Cloudinary.
 
-    The file itself went straight to Cloudinary from the browser using a
-    signature from /api/admin/images/upload-signature; what arrives here is the
+    The file is uploaded to Cloudinary separately; what arrives here is the
     resulting public_id.
     """
     product = _get_or_404(Product, product_id, "PRODUCT_NOT_FOUND", "product")
     body = json_body()
     reject_unknown_fields(body, IMAGE_FIELDS)
 
-    public_id = body_str(body, "public_id", max_length=255)
-    url = body_str(body, "url", max_length=500)
+    public_id = _blank_to_none(body_str(body, "public_id", max_length=255))
+    url = _blank_to_none(body_str(body, "url", max_length=500))
     alt_text = body_str(body, "alt_text", max_length=255)
     position = body_int(body, "position", minimum=0, maximum=999)
     is_primary = body_bool(body, "is_primary")
 
-    if public_id is MISSING and url is MISSING:
-        raise ValidationError("Provide either public_id or url.")
+    if public_id is MISSING:
+        public_id = None
+    if url is MISSING:
+        url = None
+
+    if public_id is None and url is None:
+        raise ValidationError("Provide either a Cloudinary public_id or a url.")
 
     if alt_text is MISSING or not alt_text:
         raise ValidationError(
@@ -689,8 +706,8 @@ def add_image(product_id: int):
 
     image = ProductImage(
         product_id=product.id,
-        public_id=None if public_id is MISSING else public_id,
-        url=None if url is MISSING else url,
+        public_id=public_id,
+        url=url,
         alt_text=alt_text,
         position=position,
         is_primary=primary,
@@ -726,8 +743,10 @@ def update_image(image_id: int):
     changes = audit.apply_changes(
         image,
         {
-            "public_id": body_str(body, "public_id", max_length=255, nullable=True),
-            "url": body_str(body, "url", max_length=500, nullable=True),
+            "public_id": _blank_to_none(
+                body_str(body, "public_id", max_length=255, nullable=True)
+            ),
+            "url": _blank_to_none(body_str(body, "url", max_length=500, nullable=True)),
             "alt_text": alt_text,
             "position": body_int(body, "position", minimum=0, maximum=999),
             "is_primary": is_primary,

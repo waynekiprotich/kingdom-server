@@ -561,6 +561,39 @@ def test_an_image_needs_a_source(client, auth_headers, product):
     assert response.status_code == 422
 
 
+def test_a_blank_public_id_is_not_a_source(client, auth_headers, product):
+    """Whitespace is not a photograph.
+
+    The database only checks that one of public_id/url is non-NULL, so an
+    empty string would slip past it and leave a row that renders as a broken
+    image with no way to tell why.
+    """
+    response = client.post(
+        f"/api/admin/products/{product.id}/images",
+        headers=auth_headers,
+        json={"public_id": "   ", "alt_text": "A shirt"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_an_image_cannot_be_blanked_by_update(client, auth_headers, product):
+    created = client.post(
+        f"/api/admin/products/{product.id}/images",
+        headers=auth_headers,
+        json={"public_id": "products/shirt", "alt_text": "A shirt"},
+    )
+    image_id = created.get_json()["data"]["image"]["id"]
+
+    response = client.patch(
+        f"/api/admin/images/{image_id}",
+        headers=auth_headers,
+        json={"public_id": "  "},
+    )
+
+    assert response.status_code == 422
+
+
 def test_the_first_image_becomes_the_primary_one(client, auth_headers, product):
     response = client.post(
         f"/api/admin/products/{product.id}/images",
