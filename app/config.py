@@ -76,6 +76,24 @@ class BaseConfig:
     MAX_FAILED_LOGINS = 5
     LOGIN_LOCKOUT_MINUTES = 15
 
+    #: How many proxies sit in front of the app. Render puts exactly one there;
+    #: running locally there are none. ProxyFix trusts this many hops when it
+    #: rewrites remote_addr, and trusting more than actually exist would let a
+    #: caller forge their own address through X-Forwarded-For — which is the
+    #: whole basis of the rate limiting below.
+    TRUSTED_PROXY_HOPS = 0
+
+    #: name -> (requests allowed, window in seconds). Per client address
+    #: unless the endpoint says otherwise. Deliberately generous: these are
+    #: here to stop scripted abuse, not to inconvenience a customer who taps
+    #: "place order" twice because the first tap seemed slow.
+    RATE_LIMITS = {
+        "login": (10, 900),  # 10 attempts per 15 min, on top of account lockout
+        "refresh": (60, 900),
+        "orders": (12, 600),  # a real person does not place 12 orders in 10 min
+        "upload-signature": (60, 3600),
+    }
+
     # External services. Read in __init__, not in the class body: the class
     # body runs at import time, which is before create_app() calls
     # load_dotenv(), so class-level os.environ reads would always be empty.
@@ -164,8 +182,15 @@ class ProductionConfig(BaseConfig):
     ENV_NAME = "production"
     DEBUG = False
 
+    #: Render terminates TLS and forwards to the app, so there is one hop.
+    #: Override with TRUSTED_PROXY_HOPS if that ever stops being true.
+    TRUSTED_PROXY_HOPS = 1
+
     def __init__(self) -> None:
         super().__init__()
+        self.TRUSTED_PROXY_HOPS = int(
+            os.environ.get("TRUSTED_PROXY_HOPS", self.TRUSTED_PROXY_HOPS)
+        )
         missing = [
             name
             for name in ("SECRET_KEY", "JWT_SECRET_KEY", "DATABASE_URL", "CORS_ORIGINS")

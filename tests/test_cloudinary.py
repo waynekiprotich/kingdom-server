@@ -7,6 +7,7 @@ import hashlib
 
 import pytest
 
+from app.extensions import db
 from app.services import cloudinary
 
 
@@ -86,6 +87,21 @@ def test_upload_signature_endpoint_returns_params_for_an_admin(
     assert data["cloud_name"] == "kingdom"
     assert data["signature"]
     assert "api_secret" not in data
+
+
+def test_a_deactivated_admin_cannot_mint_an_upload_signature(
+    client, configured, admin, auth_headers
+):
+    """Signing an upload is an admin action, so it follows the same rule as
+    the rest of the admin API: deactivating an account cuts it off now, not
+    whenever its access token happens to expire.
+    """
+    admin.is_active = False
+    db.session.commit()
+
+    response = client.post("/api/admin/images/upload-signature", headers=auth_headers)
+
+    assert response.status_code == 403
 
 
 def test_upload_signature_fails_cleanly_when_not_configured(client, app, auth_headers):

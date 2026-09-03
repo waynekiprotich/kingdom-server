@@ -27,6 +27,11 @@ def app():
         yield application
         _db.session.remove()
         _db.drop_all()
+        # Every test builds its own app, and so its own engine and pool. The
+        # pools linger until garbage collection, which is enough to exhaust
+        # PostgreSQL's connection slots part-way through a full run now that
+        # rate limiting checks out a connection of its own.
+        _db.engine.dispose()
 
 
 @pytest.fixture

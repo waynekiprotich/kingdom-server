@@ -23,6 +23,7 @@ from app.errors import ApiError, AuthenticationError, PermissionError_
 from app.extensions import db
 from app.models.admin import Admin
 from app.models.token import TokenBlocklist
+from app.services import rate_limit
 from app.validation import json_body, required_str
 
 bp = Blueprint("admin_auth", __name__, url_prefix="/api/admin/auth")
@@ -52,6 +53,7 @@ def _serialise(admin: Admin) -> dict[str, object]:
 
 
 @bp.post("/login")
+@rate_limit.limit("login")
 def login():
     body = json_body()
     email = required_str(body, "email").lower()
@@ -82,6 +84,7 @@ def login():
 
     admin.register_successful_login()
     db.session.commit()
+    rate_limit.reset(f"login:{rate_limit.client_ip()}")
 
     identity = str(admin.id)
     claims = _admin_claims(admin)
@@ -99,6 +102,7 @@ def login():
 
 
 @bp.post("/refresh")
+@rate_limit.limit("refresh")
 @jwt_required(refresh=True)
 def refresh():
     admin = db.session.get(Admin, int(get_jwt_identity()))

@@ -8,10 +8,10 @@ memory or bandwidth, and the API secret never leaves it.
 from __future__ import annotations
 
 from flask import Blueprint, jsonify
-from flask_jwt_extended import jwt_required
 
+from app.authz import admin_required
 from app.errors import ApiError
-from app.services import cloudinary
+from app.services import cloudinary, rate_limit
 from app.validation import query_str
 
 bp = Blueprint("admin_media", __name__, url_prefix="/api/admin/images")
@@ -24,7 +24,8 @@ class ImageServiceUnavailable(ApiError):
 
 
 @bp.post("/upload-signature")
-@jwt_required()
+@admin_required()
+@rate_limit.limit("upload-signature")
 def upload_signature():
     folder = query_str("folder", max_length=60) or "products"
 

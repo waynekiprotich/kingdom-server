@@ -25,6 +25,7 @@ from app.models.order import (
     can_transition,
 )
 from app.models.payment import Payment, PaymentStatus
+from app.models.rate_limit import RateLimitCounter
 
 __all__ = [
     "ORDER_TRANSITIONS",
@@ -44,6 +45,7 @@ __all__ = [
     "ProductImage",
     "ProductStatus",
     "ProductVariant",
+    "RateLimitCounter",
     "VariantStatus",
     "can_transition",
 ]

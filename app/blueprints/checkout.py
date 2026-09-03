@@ -23,6 +23,7 @@ from app.models.catalog import ProductStatus, ProductVariant, VariantStatus
 from app.models.inventory import InventoryMovement, MovementReason
 from app.models.order import Order, OrderItem, OrderStatus
 from app.serializers import serialize_order_confirmation
+from app.services import rate_limit
 from app.utils import generate_order_number, normalise_kenyan_phone
 from app.validation import (
     MISSING,
@@ -87,6 +88,7 @@ def _parse_items(raw: object) -> list[tuple[int, int]]:
 
 
 @bp.post("/orders")
+@rate_limit.limit("orders")
 def create_order():
     body = json_body()
     reject_unknown_fields(body, ORDER_FIELDS)
