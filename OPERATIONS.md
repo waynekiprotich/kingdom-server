@@ -94,19 +94,34 @@ that an uptime monitor pinging every 5 minutes is also what keeps it awake.
 
 ### CORS, specifically
 
-The single most common cause of "the shop loads but nothing appears". The
-origin must match scheme, host and port with no trailing slash:
+The single most common cause of "the shop loads but nothing appears".
+
+The storefront runs on **Cloudflare Workers**, and the value currently set on
+Render is:
 
 ```
-CORS_ORIGINS=https://kingdom-collection.pages.dev
+CORS_ORIGINS=https://kingdom-client.waynekip123.workers.dev
 ```
 
-A Cloudflare Pages project also serves every deploy on a per-commit
-subdomain (`https://<hash>.kingdom-collection.pages.dev`). Those are *not*
-covered by the production origin. Add a custom domain and point
-`CORS_ORIGINS` at that once you have one, rather than chasing preview URLs.
+An origin is scheme + host only. **No trailing slash, no path** —
+`https://…workers.dev/` with the slash does not match and the browser blocks
+every request.
 
-When you move to a custom domain, change this value and redeploy — nothing
+Verify it from anywhere, without a browser:
+
+```bash
+curl -sI -H "Origin: https://kingdom-client.waynekip123.workers.dev" \
+  https://kingdom-server-ao5x.onrender.com/api/products | grep -i access-control-allow-origin
+```
+
+The origin you sent should come back. Silence means the browser will block
+the shop.
+
+Cloudflare also serves each deployed version on its own preview hostname
+(a version prefix on the same `workers.dev` subdomain). Those are *not*
+covered by the production origin above, so a preview build will fail CORS
+even though the live site works — that is expected, not a bug to chase. Once
+there is a custom domain, point `CORS_ORIGINS` at it and redeploy; nothing
 else in the backend references the frontend's address.
 
 ---
@@ -127,7 +142,7 @@ deploying:
 git diff --name-only origin/main -- migrations/versions/
 ```
 
-The frontend deploys separately (Cloudflare Pages) and needs its own rebuild
+The frontend deploys separately (Cloudflare Workers) and needs its own rebuild
 whenever `VITE_API_URL` changes — the API preconnect tag is injected at build
 time, so it only appears in a fresh build.
 
@@ -169,7 +184,8 @@ app. Trusting more hops than exist lets a caller forge their address through
       carried over from development.
 - [ ] Confirm database backups exist, and restore one to prove it.
 - [ ] Point an uptime monitor at `/health/ready`.
-- [ ] Set `CORS_ORIGINS` to the final frontend origin.
+- [x] `CORS_ORIGINS` set and verified against the live Workers origin. Revisit
+      only when a custom domain replaces it.
 - [ ] Replace seeded demo products with the real catalogue.
 - [ ] Privacy policy, terms, and returns policy published — you process phone
       numbers and payments, so Kenya's Data Protection Act applies.
