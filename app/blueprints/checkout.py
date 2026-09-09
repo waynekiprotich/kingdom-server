@@ -17,6 +17,7 @@ from flask import Blueprint, current_app, jsonify
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from app.authz import current_customer
 from app.errors import ConflictError, NotFoundError, ValidationError
 from app.extensions import db
 from app.models.catalog import ProductStatus, ProductVariant, VariantStatus
@@ -170,12 +171,19 @@ def create_order():
     delivery_fee = current_app.config["DELIVERY_FEE"]
     total = subtotal + delivery_fee
 
+    # Signed in or not, the order is placed the same way. An account only
+    # decides whether it also lands in someone's order history — it is never a
+    # condition of buying, and a stale or invalid token reads as "guest"
+    # rather than failing the sale.
+    customer = current_customer()
+
     order = Order(
         # Placeholder — replaced below once the row has an id to derive the
         # real order_number from. The column is NOT NULL, so something
         # well-formed has to go here first. confirmation_token is left to the
         # model's own default.
         order_number="PENDING",
+        customer_id=customer.id if customer else None,
         status=OrderStatus.PAYMENT_PENDING,
         customer_name=customer_name,
         customer_phone=customer_phone,

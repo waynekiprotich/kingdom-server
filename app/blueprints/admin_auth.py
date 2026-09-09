@@ -19,6 +19,7 @@ from flask_jwt_extended import (
 from sqlalchemy import select
 from werkzeug.security import generate_password_hash
 
+from app.authz import ACTOR_ADMIN, actor_claims, require_actor
 from app.errors import ApiError, AuthenticationError, PermissionError_
 from app.extensions import db
 from app.models.admin import Admin
@@ -40,7 +41,13 @@ class AccountLockedError(ApiError):
 
 
 def _admin_claims(admin: Admin) -> dict[str, str]:
-    return {"role": str(admin.role), "email": admin.email}
+    # `actor` is what stops a customer's token — same signing key, same numeric
+    # identity shape — from being accepted here. See app/authz.py.
+    return {
+        **actor_claims(ACTOR_ADMIN),
+        "role": str(admin.role),
+        "email": admin.email,
+    }
 
 
 def _serialise(admin: Admin) -> dict[str, object]:
@@ -105,6 +112,11 @@ def login():
 @rate_limit.limit("refresh")
 @jwt_required(refresh=True)
 def refresh():
+    # Refresh is the sharpest edge of the actor rule: without this check a
+    # *customer's* refresh token would mint an admin access token for whichever
+    # admin happens to share its numeric id.
+    require_actor(ACTOR_ADMIN)
+
     admin = db.session.get(Admin, int(get_jwt_identity()))
     if admin is None or not admin.is_active:
         raise PermissionError_("This account is no longer active.")
@@ -129,6 +141,8 @@ def logout():
     Called once with the access token and once with the refresh token; the
     client discards both either way.
     """
+    require_actor(ACTOR_ADMIN)
+
     token = get_jwt()
     db.session.add(
         TokenBlocklist(
@@ -145,6 +159,7 @@ def logout():
 @bp.get("/me")
 @jwt_required()
 def me():
+    require_actor(ACTOR_ADMIN)
     admin = db.session.get(Admin, int(get_jwt_identity()))
     if admin is None or not admin.is_active:
         raise PermissionError_("This account is no longer active.")

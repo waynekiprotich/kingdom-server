@@ -16,6 +16,7 @@ from app.models.catalog import (
     ProductVariant,
     VariantStatus,
 )
+from app.models.customer import Customer
 from app.models.inventory import InventoryMovement, MovementReason
 from app.models.order import (
     ORDER_TRANSITIONS,
@@ -34,6 +35,7 @@ __all__ = [
     "AuditLog",
     "Base",
     "Category",
+    "Customer",
     "InventoryMovement",
     "MovementReason",
     "Order",

@@ -75,8 +75,10 @@ def create_app(config_name: str | None = None) -> Flask:
     register_jwt_callbacks(jwt)
 
     from app.blueprints import (
+        account,
         admin_auth,
         admin_catalog,
+        admin_customers,
         admin_media,
         admin_orders,
         catalog,
@@ -90,9 +92,11 @@ def create_app(config_name: str | None = None) -> Flask:
     app.register_blueprint(admin_media.bp)
     app.register_blueprint(admin_catalog.bp)
     app.register_blueprint(admin_orders.bp)
+    app.register_blueprint(admin_customers.bp)
     app.register_blueprint(catalog.bp)
     app.register_blueprint(checkout.bp)
     app.register_blueprint(payments.bp)
+    app.register_blueprint(account.bp)
 
     from app.cli import register_cli
 

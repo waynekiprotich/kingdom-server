@@ -57,7 +57,11 @@ def _get_order(order_id: int) -> Order:
     order = db.session.scalar(
         select(Order)
         .where(Order.id == order_id)
-        .options(selectinload(Order.items), selectinload(Order.payments))
+        .options(
+            selectinload(Order.items),
+            selectinload(Order.payments),
+            selectinload(Order.customer),
+        )
     )
     if order is None:
         raise NotFoundError(f"No order with id {order_id}.", code="ORDER_NOT_FOUND")

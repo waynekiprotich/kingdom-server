@@ -9,6 +9,7 @@ from app import create_app
 from app.extensions import db as _db
 from app.models.admin import Admin, AdminRole
 from app.models.catalog import Category, Product, ProductStatus, ProductVariant
+from app.models.customer import Customer
 from app.models.order import Order, OrderStatus
 
 TEST_PASSWORD = "correct-horse-battery"
@@ -61,6 +62,30 @@ def tokens(client, admin):
 @pytest.fixture
 def auth_headers(tokens):
     return {"Authorization": f"Bearer {tokens['access_token']}"}
+
+
+@pytest.fixture
+def customer(app):
+    account = Customer(email="shopper@example.com", name="Amina Wanjiru", phone="254712345678")
+    account.set_password(TEST_PASSWORD)
+    _db.session.add(account)
+    _db.session.commit()
+    return account
+
+
+@pytest.fixture
+def customer_tokens(client, customer):
+    response = client.post(
+        "/api/account/login",
+        json={"email": customer.email, "password": TEST_PASSWORD},
+    )
+    assert response.status_code == 200
+    return response.get_json()["data"]
+
+
+@pytest.fixture
+def customer_headers(customer_tokens):
+    return {"Authorization": f"Bearer {customer_tokens['access_token']}"}
 
 
 @pytest.fixture

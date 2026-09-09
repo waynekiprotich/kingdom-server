@@ -14,10 +14,15 @@ from __future__ import annotations
 from flask import Flask, request
 
 #: Anything under these carries a person's details — an admin's view of the
-#: business, or a guest's own order with their name, phone and address. The
-#: public catalog is deliberately not here: it is the same for everyone and
-#: the hot path, so it stays cacheable.
-PRIVATE_PREFIXES = ("/api/admin", "/api/orders", "/api/payments")
+#: business, a guest's own order with their name, phone and address, or a
+#: signed-in customer's account and order history. The public catalog is
+#: deliberately not here: it is the same for everyone and the hot path, so it
+#: stays cacheable.
+#:
+#: **Adding a blueprint that serves personal data means adding it here.**
+#: `/api/account` was missed when customer accounts landed, and nothing failed
+#: — the JSON was correct, and someone's order history was simply cacheable.
+PRIVATE_PREFIXES = ("/api/admin", "/api/orders", "/api/payments", "/api/account")
 
 
 def register_security_headers(app: Flask) -> None:

@@ -246,6 +246,10 @@ def serialize_admin_order_summary(order, item_count: int) -> dict:
         "delivery_location": order.delivery_location,
         "total": money(order.total),
         "item_count": item_count,
+        # Null for a guest order, which is most of them and entirely normal.
+        # Present so the dashboard can tell a returning account from a
+        # one-off without a second request per row.
+        "customer_id": order.customer_id,
         "created_at": order.created_at.isoformat() if order.created_at else None,
         "paid_at": order.paid_at.isoformat() if order.paid_at else None,
     }
@@ -267,6 +271,11 @@ def serialize_admin_order(order) -> dict:
         "total": money(order.total),
         "paid_at": order.paid_at.isoformat() if order.paid_at else None,
         "cancelled_at": order.cancelled_at.isoformat() if order.cancelled_at else None,
+        # The account that placed it, if any. Guest orders carry None, and the
+        # contact details above are the order's own snapshot either way — an
+        # account changing its phone number must not rewrite where last
+        # month's delivery was going.
+        "customer": serialize_customer(order.customer) if order.customer else None,
         "items": [serialize_admin_order_item(item) for item in order.items],
         "payments": [serialize_admin_payment(payment) for payment in order.payments],
         # The transitions an *admin* may perform. The dashboard renders exactly
@@ -336,6 +345,40 @@ def serialize_payment_status(payment) -> dict:
         "message": _PAYMENT_MESSAGES.get(status, "Waiting for M-Pesa."),
         "amount": money(payment.amount),
         "receipt": payment.mpesa_receipt_number if status == "SUCCESSFUL" else None,
+    }
+
+
+def serialize_customer(customer) -> dict:
+    """What a customer may see of their own account.
+
+    No ``password_hash``, and none of the lockout bookkeeping — a customer has
+    no use for their own failed-login count, and publishing it would tell an
+    attacker who got in how close they were.
+    """
+    return {
+        "id": customer.id,
+        "email": customer.email,
+        "name": customer.name,
+        "phone": customer.phone,
+    }
+
+
+def serialize_admin_customer(customer, order_count: int = 0, total_spent=None) -> dict:
+    """What an admin may see of a customer.
+
+    Adds what running a shop actually requires — when they joined, whether the
+    account is active, what they have bought — and still never the password
+    hash.
+    """
+    return {
+        **serialize_customer(customer),
+        "is_active": customer.is_active,
+        "order_count": order_count,
+        "total_spent": money(total_spent) if total_spent is not None else "0.00",
+        "last_login_at": customer.last_login_at.isoformat()
+        if customer.last_login_at
+        else None,
+        **_timestamps(customer),
     }
 
 

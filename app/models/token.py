@@ -21,8 +21,15 @@ class TokenBlocklist(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     jti: Mapped[str] = mapped_column(String(36), nullable=False, unique=True, index=True)
     token_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    # Whose token this was. Exactly one is set — two nullable foreign keys
+    # rather than one polymorphic id column, so the database still enforces
+    # that the row points at an account that exists. Revocation works the same
+    # for both; only the owner differs.
     admin_id: Mapped[int | None] = mapped_column(
         ForeignKey("admins.id", ondelete="CASCADE")
+    )
+    customer_id: Mapped[int | None] = mapped_column(
+        ForeignKey("customers.id", ondelete="CASCADE")
     )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(

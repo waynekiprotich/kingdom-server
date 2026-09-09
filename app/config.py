@@ -139,6 +139,13 @@ class BaseConfig:
         # outstanding — that guard, not this limit, is what stops a customer
         # tapping "Pay" three times from getting three prompts.
         "payments": (30, 600),
+        # Sign-up is cheap to attempt and creates a row, so it is limited even
+        # though it is not sensitive in the way login is. Sized for CGNAT like
+        # the others — a shared carrier gateway must not lock out a street.
+        "register": (15, 3600),
+        # Claiming an order is a token guess if you are not the owner. Tight,
+        # because a legitimate customer does this a handful of times ever.
+        "claim": (10, 600),
         "upload-signature": (60, 3600),
     }
 

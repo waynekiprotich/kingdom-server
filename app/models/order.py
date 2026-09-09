@@ -83,7 +83,22 @@ class Order(Base, TimestampMixin):
         index=True,
     )
 
-    # Guest checkout: contact details, no account (spec §8, §15).
+    #: The account that placed this, when one was signed in. NULL means a
+    #: guest order, which stays the primary path — an account is a convenience,
+    #: never a requirement to buy.
+    #:
+    #: RESTRICT, like the catalog rows an order references: order history has
+    #: to outlive the account that placed it, so a customer is deactivated,
+    #: never deleted out from under their own orders (business rule 9's
+    #: reasoning, applied to people).
+    customer_id: Mapped[int | None] = mapped_column(
+        ForeignKey("customers.id", ondelete="RESTRICT"), index=True
+    )
+
+    # Contact details are still stored on the order itself, account or not.
+    # They are a snapshot of where *this* delivery goes: someone who moves
+    # house must not have last month's order silently re-addressed, and a
+    # guest has nowhere else to keep them (spec §8, §15).
     customer_name: Mapped[str] = mapped_column(String(120), nullable=False)
     customer_phone: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     delivery_location: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -99,6 +114,9 @@ class Order(Base, TimestampMixin):
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    customer: Mapped["Customer | None"] = relationship(  # noqa: F821
+        back_populates="orders"
+    )
     items: Mapped[list["OrderItem"]] = relationship(
         back_populates="order", cascade="all, delete-orphan"
     )
