@@ -34,6 +34,11 @@ def test_production_accepts_strong_secrets(monkeypatch):
     monkeypatch.setenv("JWT_SECRET_KEY", STRONG)
     monkeypatch.setenv("DATABASE_URL", "postgresql://user:pw@localhost/kingdom")
     monkeypatch.setenv("CORS_ORIGINS", "https://example.com, https://www.example.com")
+    # Set explicitly rather than left to the default: a developer's .env has
+    # MPESA_MODE=simulator in it, load_dotenv puts that in the environment, and
+    # production refuses to start on it. Naming it here keeps the test
+    # deterministic and states what a valid production environment contains.
+    monkeypatch.setenv("MPESA_MODE", "daraja")
 
     config = get_config("production")
 

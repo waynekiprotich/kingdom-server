@@ -6,7 +6,10 @@ in the database and never leave it through this blueprint.
 
 from __future__ import annotations
 
-from flask import Blueprint, jsonify
+import time
+from threading import Lock
+
+from flask import Blueprint, current_app, jsonify
 from sqlalchemy import and_, asc, desc, exists, func, or_, select
 from sqlalchemy.orm import selectinload
 
@@ -76,7 +79,59 @@ def _resolve_category(slug: str | None) -> Category | None:
     return category
 
 
-def _facets(base_filters) -> dict:
+#: The cache is per process, so each gunicorn worker warms its own. That is
+#: the right trade at this size: a shared cache server would be a new piece of
+#: infrastructure to run and pay for, to save a query that already only runs
+#: once a minute per worker.
+#:
+#: Bounded, because the scope key contains the caller's search term. An
+#: unbounded dict keyed on attacker-supplied text is a memory-exhaustion bug,
+#: not a cache.
+FACET_CACHE_MAX_ENTRIES = 256
+
+_facet_cache: dict[tuple[int | None, str | None], tuple[float, dict]] = {}
+_facet_cache_lock = Lock()
+
+
+def _facets(base_filters, scope_key: tuple[int | None, str | None]) -> dict:
+    """Facets for this scope, computed at most once per ``FACET_CACHE_SECONDS``.
+
+    ``scope_key`` must identify exactly what ``base_filters`` select — the
+    category and the search term — because that pair is what the answer
+    depends on.
+    """
+    ttl = current_app.config["FACET_CACHE_SECONDS"]
+    if ttl <= 0:
+        return _compute_facets(base_filters)
+
+    now = time.monotonic()
+
+    with _facet_cache_lock:
+        cached = _facet_cache.get(scope_key)
+        if cached is not None and now - cached[0] < ttl:
+            return cached[1]
+
+    # Computed outside the lock: this is the slow part, and holding a lock
+    # across it would serialise every catalog request behind one query.
+    # Two callers racing here both compute and the second simply overwrites,
+    # which is cheaper than the contention avoiding it would cost.
+    computed = _compute_facets(base_filters)
+
+    with _facet_cache_lock:
+        _facet_cache[scope_key] = (now, computed)
+        if len(_facet_cache) > FACET_CACHE_MAX_ENTRIES:
+            # Drop the oldest entries. The hot scopes — no filter, and one per
+            # category — are re-warmed on their next request; what gets
+            # evicted is the long tail of one-off search terms.
+            for key in sorted(_facet_cache, key=lambda k: _facet_cache[k][0])[
+                : len(_facet_cache) - FACET_CACHE_MAX_ENTRIES
+            ]:
+                del _facet_cache[key]
+
+    return computed
+
+
+def _compute_facets(base_filters) -> dict:
     """Which sizes, colours and prices exist within the current scope.
 
     Deliberately ignores the size/colour/price filters themselves, so choosing
@@ -203,7 +258,10 @@ def list_products():
                     "category": serialize_category(category) if category else None,
                     "sort": sort,
                     "query": search,
-                    **_facets(base_filters),
+                    **_facets(
+                        base_filters,
+                        (category.id if category else None, search or None),
+                    ),
                 },
             },
         }

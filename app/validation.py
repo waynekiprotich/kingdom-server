@@ -38,8 +38,17 @@ class _Missing:
 MISSING = _Missing()
 
 
-def json_body() -> dict[str, Any]:
+def json_body(*, required: bool = True) -> dict[str, Any]:
+    """The request body as a dict.
+
+    ``required=False`` treats a missing body as an empty one, for endpoints
+    where every field is optional — sending nothing is then a legitimate way to
+    say "use the defaults", and rejecting it would be pedantry. A body that is
+    present but is not an object is still an error either way.
+    """
     body = request.get_json(silent=True)
+    if body is None and not required:
+        return {}
     if not isinstance(body, dict):
         raise ValidationError("Expected a JSON object in the request body.")
     return body

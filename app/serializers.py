@@ -303,6 +303,42 @@ def serialize_order_item(item) -> dict:
     }
 
 
+#: What a payment status means to the person waiting on it. The storefront
+#: shows these rather than composing its own copy from a status code, so the
+#: wording stays in one place and stays true to the state machine.
+_PAYMENT_MESSAGES = {
+    "INITIATED": "Sending the request to M-Pesa…",
+    "PENDING": "Check your phone and enter your M-Pesa PIN.",
+    "SUCCESSFUL": "Payment received.",
+    "FAILED": "The payment did not go through.",
+    "CANCELLED": "The payment request was cancelled.",
+    "TIMEOUT": "The payment request expired before it was confirmed.",
+}
+
+
+def serialize_payment_status(payment) -> dict:
+    """What a guest may see of their own payment.
+
+    Business rule 8 applies here as much as it does to the admin shape: the
+    outcome, never the credentials and never the raw Daraja traffic. The
+    receipt number is the customer's own and is what they would quote in a
+    dispute, so it goes out once the payment has actually succeeded.
+
+    ``result_desc`` is deliberately absent. It is Safaricom's wording, written
+    for a developer, and on a failure it is where an unhelpful or confusing
+    string would reach a shopper.
+    """
+    status = payment.status.value
+    return {
+        "status": status,
+        "settled": status in ("SUCCESSFUL", "FAILED", "CANCELLED", "TIMEOUT"),
+        "successful": status == "SUCCESSFUL",
+        "message": _PAYMENT_MESSAGES.get(status, "Waiting for M-Pesa."),
+        "amount": money(payment.amount),
+        "receipt": payment.mpesa_receipt_number if status == "SUCCESSFUL" else None,
+    }
+
+
 def serialize_order_confirmation(order) -> dict:
     """What a guest sees on their own order confirmation page.
 

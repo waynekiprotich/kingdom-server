@@ -17,7 +17,7 @@ from flask import Flask, request
 #: business, or a guest's own order with their name, phone and address. The
 #: public catalog is deliberately not here: it is the same for everyone and
 #: the hot path, so it stays cacheable.
-PRIVATE_PREFIXES = ("/api/admin", "/api/orders")
+PRIVATE_PREFIXES = ("/api/admin", "/api/orders", "/api/payments")
 
 
 def register_security_headers(app: Flask) -> None:

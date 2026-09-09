@@ -61,7 +61,40 @@ class BaseConfig:
     # SQLAlchemy
     SQLALCHEMY_DATABASE_URI: str = ""
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True}
+
+    #: Connection pooling. The defaults (5 + 10 overflow, no recycle) are sized
+    #: for one process talking to a database on the same machine; neither is
+    #: true in production.
+    #:
+    #: ``pool_recycle`` is the important one. A managed PostgreSQL — and every
+    #: NAT and load balancer between here and it — drops connections that have
+    #: been idle for a few minutes. Without a recycle, the pool keeps handing
+    #: those out and ``pool_pre_ping`` discovers they are dead one round trip
+    #: at a time, on the first request after every quiet spell. Recycling below
+    #: that threshold means the pool retires them before anyone waits on one.
+    #:
+    #: The size is per *worker*, and gunicorn runs several, so the ceiling that
+    #: matters is workers × (pool_size + max_overflow). Kept deliberately small:
+    #: a small instance's connection limit is the scarce resource, not
+    #: connections themselves, and the rate limiter checks out a second
+    #: connection of its own on every protected request (see
+    #: services/rate_limit.py) — so the real demand is higher than the request
+    #: concurrency suggests.
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        "pool_pre_ping": True,
+        "pool_recycle": 280,
+        "pool_size": 5,
+        "max_overflow": 5,
+        # Without a timeout a worker blocks indefinitely on an unreachable
+        # database, and the platform's health check is what eventually notices.
+        # Five seconds turns that into a 500 with a request id attached.
+        "connect_args": {
+            "connect_timeout": 5,
+            # Shows up in pg_stat_activity, so "what is holding this
+            # connection?" has an answer that names the app.
+            "application_name": "kingdom-api",
+        },
+    }
 
     # JWT (spec §15) — admin sessions only; customers never authenticate.
     JWT_SECRET_KEY: str = ""
@@ -98,6 +131,14 @@ class BaseConfig:
         # hammering checkout, but a busy evening will not start turning real
         # customers away. Lower it only with the shared-IP case in mind.
         "orders": (40, 600),
+        # An STK push makes a stranger's phone buzz, so this one is abuse
+        # protection in a way the others are not: the limit is what stops a
+        # script using the shop to harass a number. Sized for CGNAT like
+        # "orders" above, and backed by a per-order guard in
+        # services/payments.py that refuses a second push while one is still
+        # outstanding — that guard, not this limit, is what stops a customer
+        # tapping "Pay" three times from getting three prompts.
+        "payments": (30, 600),
         "upload-signature": (60, 3600),
     }
 
@@ -113,8 +154,71 @@ class BaseConfig:
     CLOUDINARY_API_KEY = ""
     CLOUDINARY_API_SECRET = ""
 
+    #: How the STK push is delivered.
+    #:
+    #: ``daraja``    — the real thing. Talks to Safaricom.
+    #: ``simulator`` — no Daraja account needed. The push is not sent, but a
+    #:                 synthetic callback is fed through the *real* callback
+    #:                 handler a few seconds later, so the Payment row, the
+    #:                 amount check, the idempotency constraint and the order
+    #:                 transition are all genuinely exercised. Refused outright
+    #:                 in production (see ProductionConfig) — a mode that can
+    #:                 mark orders paid without Safaricom's involvement must
+    #:                 never be reachable on a live shop.
+    MPESA_MODE = "simulator"
+
+    #: Seconds the simulator waits before delivering its callback, so the
+    #: storefront's "check your phone" state is actually visible.
+    MPESA_SIMULATOR_DELAY_SECONDS = 4.0
+
+    #: Whether the simulator delivers that callback by itself, on a timer.
+    #: True is what makes the demo work with no manual step. Tests turn it off
+    #: and post the callback themselves: a background thread firing seconds
+    #: later, against a database the test has already torn down, is how a suite
+    #: becomes intermittently red for reasons nobody can reproduce.
+    MPESA_SIMULATOR_AUTO_CALLBACK = True
+
+    #: Safaricom's sandbox host and its published test shortcode and passkey.
+    #: These are public — they are printed in Daraja's own documentation and
+    #: are the same for every developer — so they are defaults, not secrets.
+    #: The consumer key and secret are per-account and are not, which is why
+    #: they stay in the environment.
+    MPESA_BASE_URL = "https://sandbox.safaricom.co.ke"
+    MPESA_SHORTCODE_DEFAULT = "174379"
+    MPESA_PASSKEY_DEFAULT = (
+        "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919"
+    )
+
+    #: ``CustomerPayBillOnline`` for a paybill, ``CustomerBuyGoodsOnline`` for
+    #: a till. The sandbox shortcode above is a paybill.
+    MPESA_TRANSACTION_TYPE = "CustomerPayBillOnline"
+
+    #: Seconds to wait on Daraja. Deliberately short: a customer is watching a
+    #: spinner, and Safaricom timing out is not a reason to hold a worker.
+    MPESA_TIMEOUT_SECONDS = 15
+
+    #: The shop's WhatsApp number in international form, digits only
+    #: (``2547XXXXXXXX``). Empty hides the WhatsApp option entirely rather than
+    #: rendering a link that goes nowhere.
+    WHATSAPP_NUMBER = ""
+
     #: Widths generated for responsive product imagery (spec §17, §22).
     IMAGE_WIDTHS = (400, 800, 1200)
+
+    #: How long `/api/products` may reuse a computed facet set, in seconds.
+    #:
+    #: Computing facets means scanning every variant in scope — 35 ms against a
+    #: 60,000-variant catalog, on every request, including the homepage's
+    #: featured strip which renders no filter panel at all.
+    #:
+    #: Sixty seconds because that is already how long the same response is
+    #: cacheable for (`PUBLIC_CACHE_CONTROL`), so this introduces no staleness
+    #: the API did not already have: a browser may serve a minute-old catalog
+    #: page from its own cache regardless. An admin's newly added size still
+    #: reaches the filter panel within the minute.
+    #:
+    #: Zero disables the cache and computes fresh every time.
+    FACET_CACHE_SECONDS = 60
 
     #: Flat delivery fee charged on every order (spec §7). Not a secret and
     #: not per-environment, so it is a plain constant rather than something
@@ -134,6 +238,33 @@ class BaseConfig:
             "CLOUDINARY_API_SECRET",
         ):
             setattr(self, name, os.environ.get(name, ""))
+
+        # The published sandbox pair stands in only while they are unset, so a
+        # real shortcode and passkey always win.
+        self.MPESA_SHORTCODE = self.MPESA_SHORTCODE or self.MPESA_SHORTCODE_DEFAULT
+        self.MPESA_PASSKEY = self.MPESA_PASSKEY or self.MPESA_PASSKEY_DEFAULT
+
+        self.MPESA_MODE = os.environ.get("MPESA_MODE", self.MPESA_MODE).strip().lower()
+        if self.MPESA_MODE not in ("daraja", "simulator"):
+            raise ConfigError(
+                f"Unknown MPESA_MODE {self.MPESA_MODE!r}. Expected 'daraja' or "
+                "'simulator'."
+            )
+
+        self.MPESA_BASE_URL = os.environ.get(
+            "MPESA_BASE_URL", self.MPESA_BASE_URL
+        ).rstrip("/")
+        self.MPESA_TRANSACTION_TYPE = os.environ.get(
+            "MPESA_TRANSACTION_TYPE", self.MPESA_TRANSACTION_TYPE
+        )
+
+        # Digits only: wa.me rejects '+' and spaces, and a number that silently
+        # does not open a chat is worse than no button at all.
+        self.WHATSAPP_NUMBER = "".join(
+            character
+            for character in os.environ.get("WHATSAPP_NUMBER", "")
+            if character.isdigit()
+        )
 
 
 class DevelopmentConfig(BaseConfig):
@@ -175,6 +306,15 @@ class TestingConfig(BaseConfig):
     JWT_SECRET_KEY = "testing-jwt-signing-key-long-enough-for-hmac"
     CORS_ORIGINS = ["http://localhost:5173"]
 
+    #: Off. The facet cache lives in a module-level dict, which outlives the
+    #: per-test application and its database — a test that seeds a catalog and
+    #: then asserts on the sizes it offers would otherwise be reading the
+    #: previous test's answer.
+    FACET_CACHE_SECONDS = 0
+
+    #: Tests drive the callback themselves; see the note on the base class.
+    MPESA_SIMULATOR_AUTO_CALLBACK = False
+
     def __init__(self) -> None:
         super().__init__()
         test_url = os.environ.get("TEST_DATABASE_URL")
@@ -188,6 +328,9 @@ class TestingConfig(BaseConfig):
 class ProductionConfig(BaseConfig):
     ENV_NAME = "production"
     DEBUG = False
+
+    #: Never the simulator. See __init__ — this is enforced, not just defaulted.
+    MPESA_MODE = "daraja"
 
     #: Render terminates TLS and forwards to the app, so there is one hop.
     #: Override with TRUSTED_PROXY_HOPS if that ever stops being true.
@@ -217,6 +360,18 @@ class ProductionConfig(BaseConfig):
             os.environ["DATABASE_URL"]
         )
         self.CORS_ORIGINS = _split_origins(os.environ["CORS_ORIGINS"])
+
+        # The simulator marks orders paid without Safaricom ever being asked.
+        # That is exactly what it is for in development, and exactly what must
+        # not be reachable on a shop taking real money — so this refuses to
+        # start rather than quietly falling back, which would leave a live site
+        # accepting free orders with nothing in the logs to say so.
+        if self.MPESA_MODE != "daraja":
+            raise ConfigError(
+                "Refusing to start: MPESA_MODE must be 'daraja' in production. "
+                "The simulator confirms payments without Safaricom and would "
+                "let anyone mark an order paid."
+            )
 
 
 _CONFIGS = {

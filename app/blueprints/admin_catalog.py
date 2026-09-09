@@ -16,6 +16,7 @@ from typing import Any
 
 from flask import Blueprint, g, jsonify
 from sqlalchemy import func, or_, select
+from sqlalchemy.orm import selectinload
 
 from app.authz import admin_required
 from app.errors import ConflictError, NotFoundError, ValidationError
@@ -61,6 +62,22 @@ VARIANT_STATUSES = tuple(status.value for status in VariantStatus)
 
 
 # --- helpers ---------------------------------------------------------------
+
+
+def _summary_loaders():
+    """Eager loads for ``serialize_admin_product_summary``.
+
+    That serializer reads ``variants`` (for the count and the stock total),
+    ``images`` (for the primary one) and ``category`` on every row. Left to
+    lazy loading that is three queries per product: a 25-row page measured 63
+    queries, against the 4 it needs. The public listing already does this; the
+    admin one was simply missing it.
+    """
+    return (
+        selectinload(Product.variants),
+        selectinload(Product.images),
+        selectinload(Product.category),
+    )
 
 
 def _get_or_404(model, entity_id: int, code: str, label: str):
@@ -303,6 +320,7 @@ def list_products():
         .order_by(ordering, Product.id.desc())
         .limit(per_page)
         .offset((page - 1) * per_page)
+        .options(*_summary_loaders())
     ).all()
 
     total_pages = (total + per_page - 1) // per_page if total else 0

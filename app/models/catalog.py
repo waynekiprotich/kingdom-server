@@ -15,6 +15,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -122,6 +123,17 @@ class ProductVariant(Base, TimestampMixin):
         CheckConstraint("stock_quantity >= 0", name="ck_variants_stock_non_negative"),
         CheckConstraint("price >= 0", name="ck_variants_price_non_negative"),
         UniqueConstraint("product_id", "size", "color", name="uq_variant_product_size_color"),
+        # Serves the "is anything of this product buyable?" EXISTS that the
+        # catalog runs for every row it returns, and that the in-stock filter
+        # runs across the whole catalog. Partial, matching that predicate
+        # exactly: only sellable variants are worth indexing, which keeps it
+        # small (488 kB against a 12 MB table at 60,000 variants) and lets the
+        # EXISTS resolve by index-only scan — measured 20.9 ms → 7.2 ms.
+        Index(
+            "ix_product_variants_in_stock",
+            "product_id",
+            postgresql_where=text("status = 'active' AND stock_quantity > 0"),
+        ),
     )
 
     @property
