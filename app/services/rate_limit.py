@@ -125,8 +125,12 @@ def limit(name: str, *, key=client_ip):
                 return view(*args, **kwargs)
 
             allowance, window_seconds = rule
-            retry_after = hit(f"{name}:{key()}", allowance, window_seconds)
+            bucket = f"{name}:{key()}"
+            retry_after = hit(bucket, allowance, window_seconds)
             if retry_after is not None:
+                # The bucket names the limit and the address, which is what
+                # an operator needs to tell one noisy client from an attack.
+                logger.warning("Rate limit exceeded: %s (%s)", bucket, request.path)
                 raise RateLimitError(
                     "Too many requests. Please wait a moment and try again.",
                 )

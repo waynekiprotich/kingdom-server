@@ -55,6 +55,40 @@ def register_cli(app: Flask) -> None:
 
         click.echo(f"Created {role} {email}")
 
+    @app.cli.command("prune-security-tables")
+    def prune_security_tables() -> None:
+        """Delete revoked tokens that have expired and closed rate-limit windows.
+
+        Safe to run at any time, as often as wanted — for example daily from a
+        scheduled job. A revoked token past its expiry is rejected for being
+        expired anyway, and a closed window no longer counts towards anything.
+        Nothing else prunes rows for addresses that never come back.
+        """
+        from datetime import timedelta
+
+        from sqlalchemy import delete
+
+        from app.models.rate_limit import RateLimitCounter
+        from app.models.token import TokenBlocklist
+
+        now = utcnow()
+        # The longest configured window; anything older than it is closed.
+        longest = max(
+            (seconds for _, seconds in app.config["RATE_LIMITS"].values()), default=0
+        )
+
+        tokens = db.session.execute(
+            delete(TokenBlocklist).where(TokenBlocklist.expires_at < now)
+        ).rowcount
+        counters = db.session.execute(
+            delete(RateLimitCounter).where(
+                RateLimitCounter.window_start < now - timedelta(seconds=longest)
+            )
+        ).rowcount
+        db.session.commit()
+
+        click.echo(f"Pruned {tokens} expired revoked tokens and {counters} rate-limit rows.")
+
     @app.cli.command("seed-dev")
     @click.option(
         "--reset",

@@ -789,7 +789,11 @@ def test_a_rejected_request_writes_no_audit_noise(client, auth_headers, category
         },
     )
 
-    assert db.session.scalar(select(AuditLog)) is None
+    # Sign-in is audited too since the security hardening; the fixture's own
+    # login row is not noise from this request.
+    assert db.session.scalar(
+        select(AuditLog).where(AuditLog.entity_type != "admin_session")
+    ) is None
 
 
 def test_a_constraint_violation_becomes_a_409_and_rolls_back(app, client, category):

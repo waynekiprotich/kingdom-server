@@ -17,10 +17,11 @@ the only safe direction here.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from functools import wraps
 
-from flask import g
+from flask import g, request
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required, verify_jwt_in_request
 
 from app.errors import PermissionError_
@@ -30,6 +31,8 @@ from app.models.customer import Customer
 
 #: The claim name, and the two values it may take. Anything else — including
 #: its absence — is not a valid actor.
+logger = logging.getLogger(__name__)
+
 ACTOR_CLAIM = "actor"
 ACTOR_ADMIN = "admin"
 ACTOR_CUSTOMER = "customer"
@@ -41,7 +44,16 @@ def actor_claims(actor: str) -> dict[str, str]:
 
 
 def require_actor(expected: str) -> None:
-    if get_jwt().get(ACTOR_CLAIM) != expected:
+    actual = get_jwt().get(ACTOR_CLAIM)
+    if actual != expected:
+        # Worth an operator's attention: a valid token presented where it
+        # does not belong is someone probing, or a client bug.
+        logger.warning(
+            "Authorization refused: %s token on %s route %s",
+            actual or "no-actor",
+            expected,
+            request.path,
+        )
         # Deliberately the same message whichever way it is wrong: a customer
         # probing admin routes learns only that they may not have them.
         raise PermissionError_("This account cannot perform that action.")
@@ -67,9 +79,13 @@ def admin_required(*roles: AdminRole):
             admin = db.session.get(Admin, int(get_jwt_identity()))
 
             if admin is None or not admin.is_active:
+                logger.warning("Authorization refused: inactive admin on %s", request.path)
                 raise PermissionError_("This account is no longer active.")
 
             if allowed and str(admin.role) not in allowed:
+                logger.warning(
+                    "Authorization refused: admin %s lacks role for %s", admin.id, request.path
+                )
                 raise PermissionError_(
                     "Your role does not permit that action.",
                     code="INSUFFICIENT_ROLE",

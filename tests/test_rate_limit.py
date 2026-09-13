@@ -52,13 +52,17 @@ def test_a_failed_attempt_still_counts(client, admin, tight):
     assert rate_limit.current_hits("login:127.0.0.1", 60) == 1
 
 
-def test_signing_in_clears_the_counter(client, admin, tight):
+def test_signing_in_does_not_clear_the_address_counter(client, admin, tight):
+    """Reversed deliberately. Clearing the per-address counter on success let
+    anyone with an account of their own — and sign-up is open — reset it
+    between guesses at other people's passwords. Per-account lockout still
+    resets on success; that is what spares someone who fumbled their own."""
     _login(client, "wrong")
     assert rate_limit.current_hits("login:127.0.0.1", 60) == 1
 
     assert _login(client).status_code == 200
 
-    assert rate_limit.current_hits("login:127.0.0.1", 60) == 0
+    assert rate_limit.current_hits("login:127.0.0.1", 60) == 2
 
 
 def test_placing_orders_is_limited(client, tight, variant):

@@ -10,7 +10,7 @@ from __future__ import annotations
 from flask import Blueprint, jsonify
 
 from app.authz import admin_required
-from app.errors import ApiError
+from app.errors import ApiError, ValidationError
 from app.services import cloudinary, rate_limit
 from app.validation import query_str
 
@@ -28,6 +28,10 @@ class ImageServiceUnavailable(ApiError):
 @rate_limit.limit("upload-signature")
 def upload_signature():
     folder = query_str("folder", max_length=60) or "products"
+    if folder not in cloudinary.UPLOAD_FOLDERS:
+        raise ValidationError(
+            f"folder must be one of: {', '.join(cloudinary.UPLOAD_FOLDERS)}."
+        )
 
     try:
         params = cloudinary.signed_upload_params(folder=folder)

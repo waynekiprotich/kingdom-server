@@ -98,6 +98,22 @@ def body_str(
     return value
 
 
+#: The largest amount a ``Numeric(12, 2)`` money column can hold. Anything
+#: above it would reach PostgreSQL and fail there instead of here.
+MAX_MONEY = Decimal("9999999999.99")
+
+
+def like_pattern(term: str) -> str:
+    """A ``%term%`` pattern with the caller's own ``%``, ``_`` and ``\\`` escaped.
+
+    Use with ``.ilike(pattern, escape="\\\\")``. Without escaping, a search
+    for "100%" matches everything, and a term made of wildcards costs the
+    database a pattern match it did not need to do.
+    """
+    escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
 def body_decimal(
     body: dict[str, Any],
     field: str,
@@ -105,6 +121,7 @@ def body_decimal(
     required: bool = False,
     nullable: bool = False,
     minimum: Decimal | None = None,
+    maximum: Decimal | None = MAX_MONEY,
 ) -> Any:
     if field not in body:
         if required:
@@ -131,6 +148,8 @@ def body_decimal(
         raise ValidationError(f"{field} must be a number.")
     if minimum is not None and parsed < minimum:
         raise ValidationError(f"{field} must be at least {minimum}.")
+    if maximum is not None and parsed > maximum:
+        raise ValidationError(f"{field} must be at most {maximum}.")
     if parsed.as_tuple().exponent < -2:
         raise ValidationError(f"{field} cannot have more than two decimal places.")
     return parsed
@@ -215,8 +234,14 @@ def query_decimal(name: str) -> Decimal | None:
     except InvalidOperation:
         raise ValidationError(f"{name} must be a number.") from None
 
+    # NaN would raise on the comparison below (a 500), and Infinity or a huge
+    # exponent would reach PostgreSQL as a numeric it cannot hold.
+    if not value.is_finite():
+        raise ValidationError(f"{name} must be a number.")
     if value < 0:
         raise ValidationError(f"{name} cannot be negative.")
+    if value > MAX_MONEY:
+        raise ValidationError(f"{name} must be at most {MAX_MONEY}.")
     return value
 
 

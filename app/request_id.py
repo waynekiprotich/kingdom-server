@@ -17,6 +17,7 @@ process, and nothing that has to be running for the API to serve traffic.
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 
 from flask import Flask, g, has_request_context, request
@@ -29,6 +30,11 @@ INBOUND_HEADERS = ("X-Request-Id", "X-Correlation-Id")
 #: retention window of a log viewer.
 ID_LENGTH = 8
 
+#: What an inbound id may contain. It is echoed into a response header and
+#: every log line, so anything that could forge a log line or break a header
+#: is replaced with a fresh id rather than trusted.
+_SAFE_ID = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
+
 
 def current() -> str | None:
     """The id for the request in flight, if there is one."""
@@ -40,9 +46,8 @@ def current() -> str | None:
 def _inbound() -> str | None:
     for header in INBOUND_HEADERS:
         value = request.headers.get(header)
-        if value:
-            # Never log an unbounded attacker-supplied string.
-            return value[:64]
+        if value and _SAFE_ID.match(value):
+            return value
     return None
 
 

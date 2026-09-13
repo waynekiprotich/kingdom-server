@@ -26,7 +26,14 @@ from app.models.order import (
 from app.models.base import utcnow
 from app.serializers import serialize_admin_order, serialize_admin_order_summary
 from app.services import audit
-from app.validation import body_choice, json_body, query_int, query_str, reject_unknown_fields
+from app.validation import (
+    body_choice,
+    json_body,
+    like_pattern,
+    query_int,
+    query_str,
+    reject_unknown_fields,
+)
 
 bp = Blueprint("admin_orders", __name__, url_prefix="/api/admin/orders")
 
@@ -106,12 +113,12 @@ def list_orders():
             raise ValidationError(f"status must be one of: {', '.join(ORDER_STATUSES)}.")
         filters.append(Order.status == OrderStatus(status))
     if search:
-        term = f"%{search}%"
+        term = like_pattern(search)
         filters.append(
             or_(
-                Order.order_number.ilike(term),
-                Order.customer_name.ilike(term),
-                Order.customer_phone.ilike(term),
+                Order.order_number.ilike(term, escape="\\"),
+                Order.customer_name.ilike(term, escape="\\"),
+                Order.customer_phone.ilike(term, escape="\\"),
             )
         )
 

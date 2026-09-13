@@ -20,6 +20,20 @@ from app.extensions import db
 from app.models.audit import AuditLog
 from app.validation import MISSING
 
+#: Width of ``audit_logs.ip_address`` — enough for any IPv6 address.
+_IP_MAX = 45
+
+
+def client_address() -> str | None:
+    """The caller's address as ProxyFix resolved it.
+
+    Never the raw ``X-Forwarded-For`` header: the client writes that, so it
+    would let anyone put whatever they like in the audit trail — and a chain
+    of several addresses overflows the column and fails the admin's change.
+    """
+    address = request.remote_addr
+    return address[:_IP_MAX] if address else None
+
 
 def _encode(value: Any) -> Any:
     """JSON-safe rendering of a column value."""
@@ -87,6 +101,34 @@ def record(
             )
             if changes
             else None,
-            ip_address=request.headers.get("X-Forwarded-For", request.remote_addr),
+            ip_address=client_address(),
+        )
+    )
+
+
+def record_auth(
+    action: str,
+    *,
+    admin_id: int | None = None,
+    admin_email: str | None = None,
+    detail: dict[str, Any] | None = None,
+) -> None:
+    """Add an admin sign-in event to the current transaction.
+
+    Separate from ``record`` because sign-in happens before there is a token to
+    read the actor from. ``admin_email`` is only ever an existing account's
+    address: what someone typed into the email box for an unknown account is
+    not stored, because people do paste passwords there by mistake.
+    Passwords and tokens never reach this function.
+    """
+    db.session.add(
+        AuditLog(
+            admin_id=admin_id,
+            admin_email=admin_email,
+            action=action,
+            entity_type="admin_session",
+            entity_id=str(admin_id) if admin_id is not None else None,
+            new_value=json.dumps(detail) if detail else None,
+            ip_address=client_address(),
         )
     )

@@ -79,11 +79,13 @@ that an uptime monitor pinging every 5 minutes is also what keeps it awake.
 
 ## Environment variables
 
-`ProductionConfig` refuses to start without the first four. None are committed
-— see `.env.example`.
+`ProductionConfig` refuses to start without the first four, and also when the
+two keys are identical or a `CORS_ORIGINS` entry is not an exact `https://`
+origin. None are committed — see `.env.example` and `docs/security.md`.
 
 | Variable | Notes |
 |---|---|
+| `FLASK_ENV` | **`production`**. Required on Render: the development config now refuses to start when `RENDER` is set. |
 | `SECRET_KEY` | ≥32 bytes. `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
 | `JWT_SECRET_KEY` | As above, and a *different* value. |
 | `DATABASE_URL` | From the Render Postgres instance. |
@@ -129,7 +131,10 @@ else in the backend references the frontend's address.
 ## Deploying
 
 - **Build command:** `pip install -r requirements.txt`
-- **Start command:** `gunicorn --bind 0.0.0.0:$PORT wsgi:app`
+- **Start command:** `gunicorn --bind 0.0.0.0:$PORT wsgi:app` — worker and
+  thread counts come from `gunicorn.conf.py` (2 × 4 gthread by default;
+  override with `WEB_CONCURRENCY` / `GUNICORN_THREADS`). Keep
+  workers × 10 below the database's connection limit.
 - **Pre-deploy command:** `FLASK_APP=wsgi.py flask db upgrade`
 - **Python:** pinned to 3.12.7 in `runtime.txt`.
 
@@ -155,7 +160,10 @@ seconds)`, counted per client address in Postgres.
 
 | Limit | Current | Why |
 |---|---|---|
-| `login` | 10 / 15 min | On top of per-account lockout. |
+| `login` | 30 / 15 min | Per address, shared by admin and customer sign-in, never reset on success. Per-account lockout (5 failures) is the targeted-guessing control. |
+| `register` | 15 / hour | Sized for CGNAT. |
+| `claim` | 10 / 10 min | Claiming an order is a token guess if you are not its owner. |
+| `payments` | 30 / 10 min | Each push rings a phone. |
 | `refresh` | 60 / 15 min | A normal session refreshes rarely. |
 | `orders` | 40 / 10 min | Sized for **shared** addresses, not one shopper — see below. |
 | `upload-signature` | 60 / hour | Admin-only, and each one is a single photograph. |
@@ -176,7 +184,38 @@ app. Trusting more hops than exist lets a caller forge their address through
 
 ---
 
+## Scheduled maintenance
+
+Run daily (Render cron job, same image and environment as the web service):
+
+```bash
+FLASK_APP=wsgi.py flask prune-security-tables
+```
+
+It deletes revoked tokens past their expiry and closed rate-limit windows.
+Safe to run at any time.
+
+## Reading the audit trail
+
+Admin sign-ins and every admin change are in `audit_logs`:
+
+```sql
+SELECT created_at, action, admin_email, entity_type, entity_id, new_value, ip_address
+FROM audit_logs ORDER BY created_at DESC LIMIT 50;
+-- repeated failures:
+SELECT ip_address, count(*) FROM audit_logs
+WHERE action = 'auth.login_failed' AND created_at > now() - interval '1 day'
+GROUP BY ip_address ORDER BY 2 DESC;
+```
+
+---
+
 ## Before launch
+
+- [ ] `FLASK_ENV=production` set on Render (the app refuses to start otherwise).
+- [ ] Daily `prune-security-tables` cron configured.
+- [ ] After the first frontend deploy, confirm the headers from `dist/_headers`
+      are live: `curl -sI https://<storefront>/ | grep -i content-security`.
 
 - [ ] Replace the dev admin accounts (`dev-admin@kingdom.local`,
       `dev-staff@kingdom.local`) with real ones via `flask create-admin`.
