@@ -15,6 +15,7 @@ Two rules run through it:
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from flask import Blueprint, current_app, g, jsonify
@@ -45,6 +46,8 @@ from app.serializers import serialize_customer, serialize_order_confirmation
 from app.services import rate_limit
 from app.utils import normalise_kenyan_phone
 from app.validation import MISSING, body_str, json_body, reject_unknown_fields
+
+logger = logging.getLogger(__name__)
 
 bp = Blueprint("account", __name__, url_prefix="/api/account")
 
@@ -163,9 +166,11 @@ def login():
         # Burn the same time as a real check, so a missing account and a wrong
         # password are indistinguishable from the outside.
         check_password_hash(_DUMMY_HASH, password)
+        logger.info("Customer sign-in failed: unknown account.")
         raise AuthenticationError()
 
     if customer.is_locked:
+        logger.warning("Customer sign-in refused: account %s is locked.", customer.id)
         raise AccountLockedError()
 
     if not customer.is_active:
@@ -177,11 +182,14 @@ def login():
             current_app.config["LOGIN_LOCKOUT_MINUTES"],
         )
         db.session.commit()
+        logger.info("Customer sign-in failed: wrong password for account %s.", customer.id)
         raise AuthenticationError()
 
+    # The per-address login counter is deliberately not reset here: anyone can
+    # register an account, and resetting on success let an attacker clear
+    # their own counter between guesses at other people's passwords.
     customer.register_successful_login()
     db.session.commit()
-    rate_limit.reset(f"login:{rate_limit.client_ip()}")
 
     return jsonify(
         {

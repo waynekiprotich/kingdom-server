@@ -15,6 +15,7 @@ client uploads directly, using a signature minted here.
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 from typing import Any
 
@@ -28,6 +29,45 @@ DEFAULT_TRANSFORMS = ("f_auto", "q_auto")
 #: Product photography is shot portrait; cards and galleries share the ratio so
 #: a grid never jumps as images load.
 PRODUCT_RATIO = "3:4"
+
+#: Folders an admin may upload into. The signature covers the folder, so a
+#: client cannot swap it — but it chooses what it asks to have signed, and
+#: this is the list of answers.
+UPLOAD_FOLDERS = ("products",)
+
+#: Photographs only. Cloudinary refuses anything else for a signed upload
+#: that names these, which rules out SVG (script-capable) and PDFs as well as
+#: anything that is not an image at all. Signed, so the browser cannot drop it.
+ALLOWED_FORMATS = ("avif", "heic", "jpeg", "jpg", "png", "webp")
+
+#: Incoming transformation applied as the file is stored: nothing is kept
+#: larger than twice the widest size the storefront ever requests
+#: (``IMAGE_WIDTHS``), so a 50-megapixel phone photo does not become the
+#: original every derived size is computed from. ``c_limit`` only ever
+#: shrinks. Signed along with everything else.
+INCOMING_TRANSFORMATION = "c_limit,w_2400,h_2400"
+
+#: Largest file the dashboard will send, in bytes. Enforced in the browser,
+#: which is advisory — Cloudinary's own plan limit is the hard ceiling — but it
+#: saves an admin on mobile data from uploading something that will be
+#: shrunk anyway. Returned with the signature so the two cannot disagree.
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
+#: What a stored public_id may look like: folder segments of plain characters.
+#: It is interpolated into delivery URLs after the transformation segment, so
+#: a comma or a slash-led segment such as ``w_5000`` would otherwise be read
+#: by Cloudinary as a transformation of the caller's choosing.
+_PUBLIC_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*(/[A-Za-z0-9][A-Za-z0-9_.-]*)*$")
+
+
+def is_valid_public_id(public_id: str) -> bool:
+    if len(public_id) > 255 or ".." in public_id:
+        return False
+    if not _PUBLIC_ID.match(public_id):
+        return False
+    # A first segment shaped like a transformation (w_400, c_fill, ar_3:4...)
+    # would be parsed as one.
+    return not re.match(r"^[a-z]{1,3}_", public_id.split("/", 1)[0])
 
 
 class CloudinaryNotConfigured(RuntimeError):
@@ -102,12 +142,21 @@ def signed_upload_params(folder: str = "products") -> dict[str, Any]:
             "CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET are required to upload."
         )
 
-    to_sign = {"folder": folder, "timestamp": int(time.time())}
+    if folder not in UPLOAD_FOLDERS:
+        raise ValueError(f"Uploads are not allowed into folder {folder!r}.")
+
+    to_sign = {
+        "allowed_formats": ",".join(ALLOWED_FORMATS),
+        "folder": folder,
+        "timestamp": int(time.time()),
+        "transformation": INCOMING_TRANSFORMATION,
+    }
 
     return {
         "cloud_name": cloud_name,
         "api_key": api_key,
         "upload_url": f"https://api.cloudinary.com/v1_1/{cloud_name}/image/upload",
         "signature": sign(to_sign, api_secret),
+        "max_bytes": MAX_UPLOAD_BYTES,
         **to_sign,
     }

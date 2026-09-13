@@ -14,7 +14,7 @@ import logging
 from typing import Any
 
 from flask import Flask, jsonify, request
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DataError, IntegrityError
 from werkzeug.exceptions import HTTPException
 
 from app.extensions import db
@@ -98,6 +98,7 @@ _HTTP_CODES = {
     404: "NOT_FOUND",
     405: "METHOD_NOT_ALLOWED",
     409: "CONFLICT",
+    413: "PAYLOAD_TOO_LARGE",
     415: "UNSUPPORTED_MEDIA_TYPE",
     422: "VALIDATION_ERROR",
     429: "RATE_LIMITED",
@@ -136,6 +137,21 @@ def register_error_handlers(app: Flask) -> None:
             "CONFLICT",
             "That change conflicts with existing data. It may already exist.",
             409,
+        )
+
+    @app.errorhandler(DataError)
+    def handle_data_error(error: DataError):
+        """The database refused a value — out of range, too long, malformed.
+
+        Validation should catch these first; this is the backstop, so a value
+        that slipped past it is the client's 422 rather than a 500 that reads
+        as an outage. The driver's message names columns and values, so it is
+        logged and never returned.
+        """
+        db.session.rollback()
+        logger.warning("Data error on %s %s: %s", request.method, request.path, error.orig)
+        return _envelope(
+            "VALIDATION_ERROR", "Some of the information provided is not valid.", 422
         )
 
     @app.errorhandler(HTTPException)

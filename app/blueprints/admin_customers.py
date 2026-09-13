@@ -25,7 +25,14 @@ from app.serializers import (
     serialize_admin_order_summary,
 )
 from app.services import audit
-from app.validation import body_bool, json_body, query_int, query_str, reject_unknown_fields
+from app.validation import (
+    body_bool,
+    json_body,
+    like_pattern,
+    query_int,
+    query_str,
+    reject_unknown_fields,
+)
 
 bp = Blueprint("admin_customers", __name__, url_prefix="/api/admin/customers")
 
@@ -74,12 +81,12 @@ def list_customers():
 
     filters = []
     if search:
-        term = f"%{search}%"
+        term = like_pattern(search)
         filters.append(
             or_(
-                Customer.name.ilike(term),
-                Customer.email.ilike(term),
-                Customer.phone.ilike(term),
+                Customer.name.ilike(term, escape="\\"),
+                Customer.email.ilike(term, escape="\\"),
+                Customer.phone.ilike(term, escape="\\"),
             )
         )
 

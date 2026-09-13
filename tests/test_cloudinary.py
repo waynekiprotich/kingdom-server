@@ -68,8 +68,12 @@ def test_upload_params_never_include_the_secret(configured):
         "api_key",
         "upload_url",
         "signature",
+        "max_bytes",
         "folder",
         "timestamp",
+        # Signed restrictions on what may be uploaded (added in hardening).
+        "allowed_formats",
+        "transformation",
     }
 
 

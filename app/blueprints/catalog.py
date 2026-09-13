@@ -28,7 +28,14 @@ from app.serializers import (
     serialize_product_detail,
     serialize_product_summary,
 )
-from app.validation import query_bool, query_choice, query_decimal, query_int, query_str
+from app.validation import (
+    like_pattern,
+    query_bool,
+    query_choice,
+    query_decimal,
+    query_int,
+    query_str,
+)
 
 bp = Blueprint("catalog", __name__, url_prefix="/api")
 
@@ -184,9 +191,12 @@ def list_products():
     if category is not None:
         base_filters.append(Product.category_id == category.id)
     if search:
-        term = f"%{search}%"
+        term = like_pattern(search)
         base_filters.append(
-            or_(Product.name.ilike(term), Product.description.ilike(term))
+            or_(
+                Product.name.ilike(term, escape="\\"),
+                Product.description.ilike(term, escape="\\"),
+            )
         )
 
     filters = list(base_filters)

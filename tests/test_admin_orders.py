@@ -292,7 +292,10 @@ def test_setting_the_same_status_is_a_no_op(client, auth_headers, order):
     )
 
     assert response.status_code == 200
-    assert db.session.scalar(select(AuditLog)) is None
+    # Ignore the fixture's own sign-in row (sign-in is audited since hardening).
+    assert db.session.scalar(
+        select(AuditLog).where(AuditLog.entity_type != "admin_session")
+    ) is None
 
 
 # --- cancellation releases stock -------------------------------------------

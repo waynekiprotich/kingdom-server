@@ -39,7 +39,7 @@ from app.serializers import (
     serialize_admin_product_summary,
     serialize_admin_variant,
 )
-from app.services import audit
+from app.services import audit, cloudinary
 from app.utils import slugify
 from app.validation import (
     MISSING,
@@ -49,6 +49,7 @@ from app.validation import (
     body_int,
     body_str,
     json_body,
+    like_pattern,
     query_choice,
     query_int,
     query_str,
@@ -304,8 +305,10 @@ def list_products():
     if category_id:
         filters.append(Product.category_id == category_id)
     if search:
-        term = f"%{search}%"
-        filters.append(or_(Product.name.ilike(term), Product.slug.ilike(term)))
+        term = like_pattern(search)
+        filters.append(
+            or_(Product.name.ilike(term, escape="\\"), Product.slug.ilike(term, escape="\\"))
+        )
 
     ordering = {
         "newest": Product.created_at.desc(),
@@ -665,6 +668,24 @@ def _blank_to_none(value: Any) -> Any:
     return None if value == "" else value
 
 
+def _checked_public_id(value: Any) -> Any:
+    """Refuse a public_id that would not be a plain Cloudinary asset path."""
+    if isinstance(value, str) and not cloudinary.is_valid_public_id(value):
+        raise ValidationError(
+            "public_id must be a Cloudinary asset path such as products/linen-shirt."
+        )
+    return value
+
+
+def _checked_url(value: Any) -> Any:
+    """External image URLs must be absolute https — never javascript:, data: or http."""
+    if isinstance(value, str) and (
+        not value.startswith("https://") or any(ch.isspace() for ch in value)
+    ):
+        raise ValidationError("url must be an https:// address.")
+    return value
+
+
 def _clear_other_primaries(product_id: int, keep_id: int) -> None:
     """Exactly one image per product is the primary one."""
     for other in db.session.scalars(
@@ -689,8 +710,8 @@ def add_image(product_id: int):
     body = json_body()
     reject_unknown_fields(body, IMAGE_FIELDS)
 
-    public_id = _blank_to_none(body_str(body, "public_id", max_length=255))
-    url = _blank_to_none(body_str(body, "url", max_length=500))
+    public_id = _checked_public_id(_blank_to_none(body_str(body, "public_id", max_length=255)))
+    url = _checked_url(_blank_to_none(body_str(body, "url", max_length=500)))
     alt_text = body_str(body, "alt_text", max_length=255)
     position = body_int(body, "position", minimum=0, maximum=999)
     is_primary = body_bool(body, "is_primary")
@@ -761,10 +782,12 @@ def update_image(image_id: int):
     changes = audit.apply_changes(
         image,
         {
-            "public_id": _blank_to_none(
-                body_str(body, "public_id", max_length=255, nullable=True)
+            "public_id": _checked_public_id(
+                _blank_to_none(body_str(body, "public_id", max_length=255, nullable=True))
             ),
-            "url": _blank_to_none(body_str(body, "url", max_length=500, nullable=True)),
+            "url": _checked_url(
+                _blank_to_none(body_str(body, "url", max_length=500, nullable=True))
+            ),
             "alt_text": alt_text,
             "position": body_int(body, "position", minimum=0, maximum=999),
             "is_primary": is_primary,

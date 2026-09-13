@@ -16,16 +16,20 @@ from flask_jwt_extended import (
     get_jwt_identity,
     jwt_required,
 )
+import logging
+
 from sqlalchemy import select
-from werkzeug.security import generate_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from app.authz import ACTOR_ADMIN, actor_claims, require_actor
 from app.errors import ApiError, AuthenticationError, PermissionError_
 from app.extensions import db
 from app.models.admin import Admin
 from app.models.token import TokenBlocklist
-from app.services import rate_limit
+from app.services import audit, rate_limit
 from app.validation import json_body, required_str
+
+logger = logging.getLogger(__name__)
 
 bp = Blueprint("admin_auth", __name__, url_prefix="/api/admin/auth")
 
@@ -68,30 +72,56 @@ def login():
 
     admin = db.session.scalar(select(Admin).where(Admin.email == email))
 
+    # Every refusal below is written to the audit trail and committed before
+    # raising, because raising rolls nothing forward: an attack on the admin
+    # sign-in that leaves no trace is the one worth recording most.
     if admin is None:
         # Burn the same time as a real check before failing.
-        from werkzeug.security import check_password_hash
-
         check_password_hash(_DUMMY_HASH, password)
+        audit.record_auth("auth.login_failed", detail={"reason": "unknown_account"})
+        db.session.commit()
+        logger.warning("Admin sign-in failed: unknown account.")
         raise AuthenticationError()
 
     if admin.is_locked:
+        audit.record_auth(
+            "auth.login_locked", admin_id=admin.id, admin_email=admin.email
+        )
+        db.session.commit()
+        logger.warning("Admin sign-in refused: account %s is locked.", admin.id)
         raise AccountLockedError()
 
-    if not admin.is_active:
-        raise PermissionError_("This account has been deactivated.")
-
+    # The password is checked before the account's state is revealed. Saying
+    # "deactivated" to someone who does not know the password would confirm
+    # that the address belongs to an admin.
     if not admin.check_password(password):
         admin.register_failed_login(
             current_app.config["MAX_FAILED_LOGINS"],
             current_app.config["LOGIN_LOCKOUT_MINUTES"],
         )
+        audit.record_auth(
+            "auth.login_failed",
+            admin_id=admin.id,
+            admin_email=admin.email,
+            detail={"reason": "wrong_password", "locked": admin.is_locked},
+        )
         db.session.commit()
+        logger.warning("Admin sign-in failed: wrong password for account %s.", admin.id)
         raise AuthenticationError()
 
+    if not admin.is_active:
+        audit.record_auth(
+            "auth.login_failed",
+            admin_id=admin.id,
+            admin_email=admin.email,
+            detail={"reason": "deactivated"},
+        )
+        db.session.commit()
+        raise PermissionError_("This account has been deactivated.")
+
     admin.register_successful_login()
+    audit.record_auth("auth.login", admin_id=admin.id, admin_email=admin.email)
     db.session.commit()
-    rate_limit.reset(f"login:{rate_limit.client_ip()}")
 
     identity = str(admin.id)
     claims = _admin_claims(admin)
@@ -151,6 +181,12 @@ def logout():
             admin_id=int(token["sub"]),
             expires_at=datetime.fromtimestamp(token["exp"], tz=timezone.utc),
         )
+    )
+    audit.record_auth(
+        "auth.logout",
+        admin_id=int(token["sub"]),
+        admin_email=token.get("email"),
+        detail={"token_type": token["type"]},
     )
     db.session.commit()
     return jsonify({"success": True, "data": {"revoked": token["type"]}})

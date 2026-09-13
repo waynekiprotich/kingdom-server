@@ -31,7 +31,8 @@ def test_production_rejects_a_short_signing_key(monkeypatch):
 
 def test_production_accepts_strong_secrets(monkeypatch):
     monkeypatch.setenv("SECRET_KEY", STRONG)
-    monkeypatch.setenv("JWT_SECRET_KEY", STRONG)
+    # Different from SECRET_KEY: production now refuses one value for both.
+    monkeypatch.setenv("JWT_SECRET_KEY", "y" * 48)
     monkeypatch.setenv("DATABASE_URL", "postgresql://user:pw@localhost/kingdom")
     monkeypatch.setenv("CORS_ORIGINS", "https://example.com, https://www.example.com")
     # Set explicitly rather than left to the default: a developer's .env has

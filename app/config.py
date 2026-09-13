@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 from datetime import timedelta
 from decimal import Decimal
+from urllib.parse import urlsplit
 
 
 class ConfigError(RuntimeError):
@@ -30,6 +31,31 @@ def _normalise_database_url(url: str) -> str:
 
 def _split_origins(raw: str) -> list[str]:
     return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
+def _require_strict_origins(origins: list[str]) -> list[str]:
+    """Production CORS may name exact HTTPS origins and nothing else.
+
+    A wildcard would let any site read authenticated API responses, and
+    Flask-CORS treats an entry containing regex characters as a pattern — so
+    ``*`` is not the only way to accidentally allow everyone. Plain ``http``
+    would let a network attacker's page pose as the storefront.
+    """
+    for origin in origins:
+        parts = urlsplit(origin)
+        if (
+            parts.scheme != "https"
+            or not parts.hostname
+            or parts.path not in ("",)
+            or parts.query
+            or parts.fragment
+            or any(character in origin for character in "*?[](){}^$\\|+")
+        ):
+            raise ConfigError(
+                f"Refusing to start: CORS_ORIGINS entry {origin!r} is not an exact "
+                "https:// origin (scheme and host only, no trailing slash, no wildcard)."
+            )
+    return origins
 
 
 #: HMAC-SHA256 wants at least this much key material (RFC 7518 §3.2). A short
@@ -57,6 +83,13 @@ class BaseConfig:
     # Flask
     SECRET_KEY: str = ""
     JSON_SORT_KEYS = False
+
+    #: Largest request body accepted, in bytes. Every endpoint takes a small
+    #: JSON document — product photographs go straight from the admin's
+    #: browser to Cloudinary and never pass through here — so anything near
+    #: this size is either a mistake or an attempt to tie up a worker. Werkzeug
+    #: answers 413 before the body is read.
+    MAX_CONTENT_LENGTH = 1024 * 1024
 
     # SQLAlchemy
     SQLALCHEMY_DATABASE_URI: str = ""
@@ -121,7 +154,12 @@ class BaseConfig:
     #: here to stop scripted abuse, not to inconvenience a customer who taps
     #: "place order" twice because the first tap seemed slow.
     RATE_LIMITS = {
-        "login": (10, 900),  # 10 attempts per 15 min, on top of account lockout
+        # Per address, shared by admin and customer sign-in, and never reset
+        # by a successful sign-in: resetting let anyone with a throwaway
+        # account clear their own counter between guesses at someone else's.
+        # Sized for CGNAT (see "orders"). Targeted guessing at one account is
+        # stopped by the per-account lockout, not by this.
+        "login": (30, 900),
         "refresh": (60, 900),
         # Orders are counted per address, and in Kenya an address is not a
         # person: Safaricom and the other carriers put large numbers of mobile
@@ -280,6 +318,15 @@ class DevelopmentConfig(BaseConfig):
 
     def __init__(self) -> None:
         super().__init__()
+        # FLASK_ENV defaults to development, so a host that forgot to set it
+        # would quietly run this config: the M-Pesa simulator allowed, seed
+        # data allowed, debug on. Render marks every service with RENDER, so
+        # the one hosting platform in use can be told apart from a laptop.
+        if os.environ.get("RENDER"):
+            raise ConfigError(
+                "Refusing to start the development config on Render. Set "
+                "FLASK_ENV=production in the service's environment."
+            )
         self.SECRET_KEY = os.environ.get(
             "SECRET_KEY", "development-only-flask-secret-key-not-for-production"
         )
@@ -363,10 +410,19 @@ class ProductionConfig(BaseConfig):
         self.JWT_SECRET_KEY = _require_strong(
             "JWT_SECRET_KEY", os.environ["JWT_SECRET_KEY"]
         )
+        if self.SECRET_KEY == self.JWT_SECRET_KEY:
+            # One leaked value should not hand over both signing keys.
+            raise ConfigError(
+                "Refusing to start: SECRET_KEY and JWT_SECRET_KEY must be different values."
+            )
         self.SQLALCHEMY_DATABASE_URI = _normalise_database_url(
             os.environ["DATABASE_URL"]
         )
-        self.CORS_ORIGINS = _split_origins(os.environ["CORS_ORIGINS"])
+        self.CORS_ORIGINS = _require_strict_origins(
+            _split_origins(os.environ["CORS_ORIGINS"])
+        )
+        if not self.CORS_ORIGINS:
+            raise ConfigError("Refusing to start: CORS_ORIGINS names no origins.")
 
         # The simulator marks orders paid without Safaricom ever being asked.
         # That is exactly what it is for in development, and exactly what must
